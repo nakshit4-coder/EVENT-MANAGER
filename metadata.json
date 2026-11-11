@@ -1,0 +1,6 @@
+{
+  "name": "Eventify - Event Management & Ticket Booking",
+  "description": "Discover extraordinary events, book digital tickets with instant QR codes, and empower organizers with real-time analytics and check-in scanning.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
