@@ -13,7 +13,8 @@ import {
   QrCode,
   Bell,
   Menu,
-  X
+  X,
+  Database
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -24,13 +25,15 @@ interface NavbarProps {
   onNavigate: (page: string, params?: any) => void;
   onOpenAuthModal: (mode?: 'login' | 'register') => void;
   onOpenScanner: () => void;
+  onOpenSupabase: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ 
   currentPage, 
   onNavigate, 
   onOpenAuthModal,
-  onOpenScanner
+  onOpenScanner,
+  onOpenSupabase
 }) => {
   const { user, role, logout, switchPersona } = useAuth();
   const { theme, toggleTheme } = useTheme();
@@ -68,6 +71,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${role === 'admin' ? 'bg-amber-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
           >
             Admin
+          </button>
+          <div className="h-3 w-px bg-slate-700 mx-1 hidden sm:block" />
+          <button
+            onClick={onOpenSupabase}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-purple-950/60 hover:bg-purple-900/60 border border-purple-800/40 text-purple-300 transition-colors"
+            title="Inspect Supabase PostgreSQL Connection"
+          >
+            <Database className="w-3 h-3 text-purple-400" />
+            <span>Supabase DB</span>
           </button>
         </div>
       </div>

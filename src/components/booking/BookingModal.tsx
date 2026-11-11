@@ -19,6 +19,8 @@ import type { Event, TicketType, Booking, BookingTicket } from '../../types';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { localStore } from '../../lib/supabase';
+import { supabaseDataService } from '../../services/supabaseService';
+import { generateUUID, toValidUUID } from '../../utils/uuid';
 
 interface BookingModalProps {
   event: Event;
@@ -91,7 +93,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setTimeout(async () => {
       try {
         const bookingRef = `EVF-${Math.floor(100000 + Math.random() * 900000)}`;
-        const bookingId = `bk-${Date.now()}`;
+        const bookingId = generateUUID();
         const newTickets: BookingTicket[] = [];
         const qrUrls: string[] = [];
 
@@ -120,7 +122,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           qrUrls.push(qrDataUrl);
 
           newTickets.push({
-            id: `bkt-${Date.now()}-${i}`,
+            id: generateUUID(),
             booking_id: bookingId,
             ticket_type_id: selectedTicketType!.id,
             ticket_type: selectedTicketType!,
@@ -134,7 +136,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
         const newBooking: Booking = {
           id: bookingId,
-          user_id: user?.id || 'guest-attendee',
+          user_id: toValidUUID(user?.id),
           user: user || undefined,
           event_id: event.id,
           event: event,
@@ -147,8 +149,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           created_at: new Date().toISOString(),
         };
 
-        // Save booking and update inventory in database store
-        localStore.saveBooking(newBooking);
+        // Save booking and update inventory in database store and Supabase
+        await supabaseDataService.createBooking(newBooking);
 
         // Add attendee notification
         if (user) {

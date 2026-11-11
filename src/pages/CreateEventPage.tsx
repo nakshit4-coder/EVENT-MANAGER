@@ -17,6 +17,8 @@ import type { Event, TicketType } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { localStore } from '../lib/supabase';
+import { supabaseDataService } from '../services/supabaseService';
+import { generateUUID, toValidUUID } from '../utils/uuid';
 
 interface CreateEventPageProps {
   onBack: () => void;
@@ -86,11 +88,11 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({
       return;
     }
 
-    const eventId = `event-${Date.now()}`;
+    const eventId = generateUUID();
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-    const generatedTiers: TicketType[] = ticketTiers.map((t, idx) => ({
-      id: `tt-${eventId}-${idx}`,
+    const generatedTiers: TicketType[] = ticketTiers.map((t) => ({
+      id: generateUUID(),
       event_id: eventId,
       name: t.name,
       description: t.desc,
@@ -102,7 +104,7 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({
 
     const newEvent: Event = {
       id: eventId,
-      organizer_id: user?.id || 'user-organizer-1',
+      organizer_id: toValidUUID(user?.id),
       title: title.trim(),
       slug: `${slug}-${Math.floor(100 + Math.random() * 900)}`,
       description: description.trim(),
@@ -126,9 +128,14 @@ export const CreateEventPage: React.FC<CreateEventPageProps> = ({
       created_at: new Date().toISOString(),
     };
 
-    localStore.saveEvent(newEvent);
-    showToast(status === 'published' ? 'Event published successfully!' : 'Event submitted for admin review.', 'success');
-    onSuccess(newEvent);
+    supabaseDataService.createEvent(newEvent, generatedTiers).then((res) => {
+      if (res.error) {
+        showToast(res.error, 'info');
+      } else {
+        showToast(status === 'published' ? 'Event published and saved to Supabase!' : 'Event submitted for admin review.', 'success');
+      }
+      onSuccess(newEvent);
+    });
   };
 
   return (

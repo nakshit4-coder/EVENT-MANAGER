@@ -12,19 +12,18 @@ import type {
   EventStatus 
 } from '../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+import { 
+  getSupabaseCredentials, 
+  isConfiguredSupabase, 
+  supabaseClient 
+} from '../services/supabaseService';
 
-export const isSupabaseConfigured = Boolean(
-  supabaseUrl && 
-  supabaseAnonKey && 
-  !supabaseUrl.includes('your-project-ref') &&
-  supabaseUrl.startsWith('http')
+export const isSupabaseConfigured = isConfiguredSupabase(
+  getSupabaseCredentials().url,
+  getSupabaseCredentials().anonKey
 );
 
-export const supabase = isSupabaseConfigured 
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : createClient('https://mock-eventify.supabase.co', 'mock-anon-key');
+export const supabase = supabaseClient;
 
 // Pre-seeded initial data for instant evaluation & demonstration
 const INITIAL_PROFILES: Profile[] = [
@@ -374,8 +373,13 @@ const STORAGE_KEYS = {
 };
 
 class EventifyLocalStore {
+  private inMemoryFallback: Record<string, any> = {};
+
   private get<T>(key: string, fallback: T): T {
     try {
+      if (typeof localStorage === 'undefined') {
+        return this.inMemoryFallback[key] ?? fallback;
+      }
       const data = localStorage.getItem(key);
       if (!data) return fallback;
       return JSON.parse(data);
@@ -386,12 +390,19 @@ class EventifyLocalStore {
 
   private set<T>(key: string, data: T): void {
     try {
-      localStorage.setItem(key, JSON.stringify(data));
-      window.dispatchEvent(new CustomEvent('eventify_store_updated', { detail: { key } }));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(key, JSON.stringify(data));
+      } else {
+        this.inMemoryFallback[key] = data;
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('eventify_store_updated', { detail: { key } }));
+      }
     } catch (err) {
       console.warn('LocalStorage error:', err);
     }
   }
+
 
   getProfiles(): Profile[] {
     return this.get<Profile[]>(STORAGE_KEYS.PROFILES, INITIAL_PROFILES);

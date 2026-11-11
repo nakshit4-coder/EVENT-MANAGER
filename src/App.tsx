@@ -16,7 +16,9 @@ import { ProfilePage } from './pages/ProfilePage';
 import { AuthModal } from './components/auth/AuthModal';
 import { QRScannerModal } from './components/scanner/QRScannerModal';
 import { DeploymentGuideModal } from './components/modals/DeploymentGuideModal';
+import { SupabaseConnectionModal } from './components/modals/SupabaseConnectionModal';
 import { localStore } from './lib/supabase';
+import { supabaseDataService } from './services/supabaseService';
 
 function EventifyApp() {
   const { user, role } = useAuth();
@@ -30,18 +32,28 @@ function EventifyApp() {
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
 
   // Reactive store state
   const [events, setEvents] = useState<Event[]>(() => localStore.getEvents());
 
   useEffect(() => {
+    const loadEvents = async () => {
+      const res = await supabaseDataService.getEvents();
+      setEvents(res.events);
+    };
+
+    loadEvents();
+
     const handleStoreChange = () => {
-      setEvents(localStore.getEvents());
+      loadEvents();
     };
 
     window.addEventListener('eventify_store_updated', handleStoreChange);
+    window.addEventListener('eventify_supabase_reconfigured', handleStoreChange);
     return () => {
       window.removeEventListener('eventify_store_updated', handleStoreChange);
+      window.removeEventListener('eventify_supabase_reconfigured', handleStoreChange);
     };
   }, []);
 
@@ -74,6 +86,7 @@ function EventifyApp() {
         onNavigate={handleNavigate}
         onOpenAuthModal={handleOpenAuth}
         onOpenScanner={() => setIsScannerOpen(true)}
+        onOpenSupabase={() => setIsSupabaseModalOpen(true)}
       />
 
       {/* Main View Router */}
@@ -147,6 +160,7 @@ function EventifyApp() {
       <Footer
         onNavigate={handleNavigate}
         onOpenConfigModal={() => setIsGuideOpen(true)}
+        onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
       />
 
       {/* Modals */}
@@ -164,6 +178,11 @@ function EventifyApp() {
       <DeploymentGuideModal
         isOpen={isGuideOpen}
         onClose={() => setIsGuideOpen(false)}
+      />
+
+      <SupabaseConnectionModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
       />
     </div>
   );

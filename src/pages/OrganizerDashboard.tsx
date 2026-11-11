@@ -32,6 +32,7 @@ import type { Event, Booking } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { localStore } from '../lib/supabase';
+import { supabaseDataService } from '../services/supabaseService';
 
 interface OrganizerDashboardProps {
   onNavigate: (page: string, params?: any) => void;
@@ -93,10 +94,10 @@ export const OrganizerDashboard: React.FC<OrganizerDashboardProps> = ({
     };
   });
 
-  const handleDeleteEvent = (eventId: string) => {
+  const handleDeleteEvent = async (eventId: string) => {
     if (confirm('Are you sure you want to delete this event listing?')) {
-      localStore.deleteEvent(eventId);
-      showToast('Event removed from registry.', 'info');
+      await supabaseDataService.deleteEvent(eventId);
+      showToast('Event removed from registry and Supabase.', 'info');
     }
   };
 

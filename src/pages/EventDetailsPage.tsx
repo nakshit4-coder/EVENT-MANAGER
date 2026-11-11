@@ -22,6 +22,7 @@ import { EventCard } from '../components/events/EventCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { localStore } from '../lib/supabase';
+import { supabaseClient } from '../services/supabaseService';
 
 interface EventDetailsPageProps {
   event: Event;
@@ -107,6 +108,19 @@ export const EventDetailsPage: React.FC<EventDetailsPageProps> = ({
     setNewReviewText('');
     setIsSubmittingReview(false);
     showToast('Thank you! Your review has been published.', 'success');
+
+    // Sync to Supabase
+    supabaseClient
+      .from('event_reviews')
+      .insert({
+        event_id: event.id,
+        user_id: user.id,
+        rating: newRating,
+        review: rev.review
+      })
+      .then(({ error }) => {
+        if (error) console.warn('Supabase review insert:', error.message);
+      });
   };
 
   const handleReportEvent = (e: React.FormEvent) => {

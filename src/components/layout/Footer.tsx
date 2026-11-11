@@ -5,9 +5,14 @@ import { useToast } from '../../contexts/ToastContext';
 interface FooterProps {
   onNavigate: (page: string, params?: any) => void;
   onOpenConfigModal: () => void;
+  onOpenSupabaseModal?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenConfigModal }) => {
+export const Footer: React.FC<FooterProps> = ({ 
+  onNavigate, 
+  onOpenConfigModal, 
+  onOpenSupabaseModal 
+}) => {
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const { showToast } = useToast();
 
@@ -39,7 +44,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenConfigModal })
             <p className="text-slate-400 text-xs sm:text-sm max-w-sm leading-relaxed">
               Discover extraordinary events, book digital tickets with encrypted QR check-ins, and empower event creators with real-time analytics.
             </p>
-            <div className="pt-2 flex items-center gap-4 text-xs text-slate-400">
+            <div className="pt-2 flex flex-wrap items-center gap-2.5 text-xs text-slate-400">
               <button
                 onClick={onOpenConfigModal}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-purple-400 border border-slate-800 transition-colors"
@@ -47,6 +52,15 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenConfigModal })
                 <Database className="w-3.5 h-3.5" />
                 <span>Supabase & Vercel Guide</span>
               </button>
+              {onOpenSupabaseModal && (
+                <button
+                  onClick={onOpenSupabaseModal}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/40 text-purple-300 border border-purple-800/40 transition-colors"
+                >
+                  <Database className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Connection Inspector</span>
+                </button>
+              )}
             </div>
           </div>
 

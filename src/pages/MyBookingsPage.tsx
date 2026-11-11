@@ -16,6 +16,7 @@ import { TicketViewerModal } from '../components/booking/TicketViewerModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { localStore } from '../lib/supabase';
+import { supabaseDataService } from '../services/supabaseService';
 
 interface MyBookingsPageProps {
   onNavigate: (page: string, params?: any) => void;
@@ -32,15 +33,36 @@ export const MyBookingsPage: React.FC<MyBookingsPageProps> = ({
   const [activeTab, setActiveTab] = useState<'all' | 'upcoming' | 'completed' | 'cancelled'>('all');
   const [selectedBookingForPass, setSelectedBookingForPass] = useState<Booking | null>(null);
   const [cancelModalBooking, setCancelModalBooking] = useState<Booking | null>(null);
+  const [bookings, setBookings] = useState<Booking[]>(() => {
+    const all = localStore.getBookings();
+    return user ? all.filter(b => b.user_id === user.id || b.user_id === 'user-attendee-1') : all;
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLiveFromSupabase, setIsLiveFromSupabase] = useState(false);
 
-  // Load all user bookings
-  const allBookings = localStore.getBookings();
-  // Filter for current user (or show all in demo if guest)
-  const userBookings = user 
-    ? allBookings.filter(b => b.user_id === user.id || b.user_id === 'user-attendee-1')
-    : allBookings;
+  // Load user bookings from Supabase
+  const loadBookings = async () => {
+    setIsLoading(true);
+    const userId = user?.id || 'user-attendee-1';
+    const res = await supabaseDataService.getUserBookings(userId);
+    setBookings(res.bookings);
+    setIsLiveFromSupabase(res.isFromSupabase);
+    setIsLoading(false);
+  };
 
-  const filteredBookings = userBookings.filter(b => {
+  React.useEffect(() => {
+    loadBookings();
+
+    const handleUpdate = () => loadBookings();
+    window.addEventListener('eventify_store_updated', handleUpdate);
+    window.addEventListener('eventify_supabase_reconfigured', handleUpdate);
+    return () => {
+      window.removeEventListener('eventify_store_updated', handleUpdate);
+      window.removeEventListener('eventify_supabase_reconfigured', handleUpdate);
+    };
+  }, [user]);
+
+  const filteredBookings = bookings.filter(b => {
     if (activeTab === 'all') return true;
     if (activeTab === 'cancelled') return b.booking_status === 'cancelled';
     if (activeTab === 'completed') {
@@ -52,11 +74,12 @@ export const MyBookingsPage: React.FC<MyBookingsPageProps> = ({
     return true;
   });
 
-  const handleCancelBooking = (bookingId: string) => {
-    const success = localStore.cancelBooking(bookingId);
+  const handleCancelBooking = async (bookingId: string) => {
+    const success = await supabaseDataService.cancelBooking(bookingId);
     if (success) {
       showToast('Booking cancelled. Ticket inventory has been restored.', 'success');
       setCancelModalBooking(null);
+      loadBookings();
     } else {
       showToast('Failed to cancel booking.', 'error');
     }
@@ -92,7 +115,7 @@ export const MyBookingsPage: React.FC<MyBookingsPageProps> = ({
             onClick={() => setActiveTab('all')}
             className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${activeTab === 'all' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
           >
-            All ({userBookings.length})
+            All ({bookings.length})
           </button>
           <button
             onClick={() => setActiveTab('upcoming')}

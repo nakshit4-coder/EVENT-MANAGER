@@ -69,7 +69,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleVerifyCode = (codeToVerify?: string) => {
+  const handleVerifyCode = async (codeToVerify?: string) => {
     const code = (codeToVerify || ticketCodeInput).trim();
     if (!code) {
       showToast('Please enter a ticket code', 'error');
@@ -77,6 +77,49 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     }
 
     const scannerId = user?.id || 'user-organizer-1';
+
+    // Try server-side secure verification first
+    try {
+      const apiRes = await fetch('/api/tickets/checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticketCode: code, scannerId }),
+      });
+      if (apiRes.ok) {
+        const apiData = await apiRes.json();
+        if (!apiData.fallback) {
+          if (apiData.success) {
+            setScanResult({
+              status: 'success',
+              message: apiData.message || 'Check-in verified via Supabase server-side RPC!',
+              ticketCode: code,
+              checkedInAt: new Date().toLocaleTimeString(),
+              tierName: apiData.tier_name,
+            });
+            showToast('Check-in confirmed!', 'success');
+            return;
+          } else if (apiData.already_used) {
+            setScanResult({
+              status: 'already_used',
+              message: apiData.message,
+              ticketCode: code,
+              checkedInAt: apiData.checked_in_at ? new Date(apiData.checked_in_at).toLocaleTimeString() : undefined,
+            });
+            return;
+          } else {
+            setScanResult({
+              status: 'invalid',
+              message: apiData.message || 'Invalid ticket code',
+              ticketCode: code,
+            });
+            return;
+          }
+        }
+      }
+    } catch {
+      // server API unavailable, proceed to client/store validation
+    }
+
     const result = localStore.checkInTicket(code, scannerId);
 
     if (result.success) {

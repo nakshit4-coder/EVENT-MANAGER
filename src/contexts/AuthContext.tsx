@@ -70,6 +70,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     initAuth();
+
+    window.addEventListener('eventify_supabase_reconfigured', initAuth);
+    return () => {
+      window.removeEventListener('eventify_supabase_reconfigured', initAuth);
+    };
   }, []);
 
   const login = async (email: string, password?: string): Promise<{ success: boolean; error?: string }> => {

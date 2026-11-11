@@ -1,10 +1,11 @@
 -- ==============================================================================
 -- EVENTIFY: Full-Stack Event Management & Ticket Booking Database Schema
--- Compatible with Supabase PostgreSQL, Authentication, Storage, & RLS
+-- Production PostgreSQL Schema for Supabase (Auth, RLS, Storage, Triggers)
 -- ==============================================================================
 
 -- 1. EXTENSIONS
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 2. ENUMS
 DO $$ BEGIN
@@ -130,7 +131,7 @@ CREATE TABLE IF NOT EXISTS public.payments (
   booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   amount NUMERIC(10, 2) NOT NULL CHECK (amount >= 0),
-  currency TEXT DEFAULT 'INR' NOT NULL,
+  currency TEXT DEFAULT 'USD' NOT NULL,
   payment_provider TEXT DEFAULT 'razorpay' NOT NULL,
   provider_order_id TEXT,
   provider_payment_id TEXT,
@@ -179,7 +180,7 @@ CREATE TABLE IF NOT EXISTS public.favorites (
 );
 
 -- ==============================================================================
--- INDEXES FOR PERFORMANCE
+-- INDEXES FOR QUERY OPTIMIZATION
 -- ==============================================================================
 CREATE INDEX IF NOT EXISTS idx_events_status ON public.events(status);
 CREATE INDEX IF NOT EXISTS idx_events_category ON public.events(category);
@@ -204,18 +205,64 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE TRIGGER update_profiles_timestamp
+DROP TRIGGER IF EXISTS update_profiles_timestamp ON public.profiles;
+CREATE TRIGGER update_profiles_timestamp
 BEFORE UPDATE ON public.profiles
 FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
 
-CREATE OR REPLACE TRIGGER update_events_timestamp
+DROP TRIGGER IF EXISTS update_events_timestamp ON public.events;
+CREATE TRIGGER update_events_timestamp
 BEFORE UPDATE ON public.events
 FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
 
 -- ==============================================================================
--- TICKET INVENTORY SAFETY & CHECK-IN RPC FUNCTIONS
+-- AUTO-SYNC NEW AUTH USERS INTO PROFILES
 -- ==============================================================================
--- Atomically reserve tickets and increment sold_quantity
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_role user_role := 'attendee';
+  v_full_name TEXT;
+  v_avatar TEXT;
+BEGIN
+  IF NEW.raw_user_meta_data->>'role' = 'organizer' THEN
+    v_role := 'organizer';
+  ELSIF NEW.raw_user_meta_data->>'role' = 'admin' THEN
+    v_role := 'admin';
+  END IF;
+
+  v_full_name := COALESCE(NEW.raw_user_meta_data->>'full_name', split_part(NEW.email, '@', 1));
+  v_avatar := COALESCE(NEW.raw_user_meta_data->>'avatar_url', 'https://api.dicebear.com/7.x/initials/svg?seed=' || NEW.id::text);
+
+  INSERT INTO public.profiles (id, full_name, email, role, avatar_url)
+  VALUES (
+    NEW.id,
+    v_full_name,
+    NEW.email,
+    v_role,
+    v_avatar
+  )
+  ON CONFLICT (id) DO UPDATE
+  SET full_name = EXCLUDED.full_name,
+      avatar_url = EXCLUDED.avatar_url,
+      role = EXCLUDED.role;
+
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Prevent trigger errors from aborting auth user creation
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+
+-- ==============================================================================
+-- ATOMIC INVENTORY RESERVATION & SECURE CHECK-IN FUNCTIONS
+-- ==============================================================================
 CREATE OR REPLACE FUNCTION reserve_ticket_inventory(
   p_ticket_type_id UUID,
   p_quantity INTEGER
@@ -224,7 +271,6 @@ RETURNS BOOLEAN AS $$
 DECLARE
   v_available INTEGER;
 BEGIN
-  -- Select with FOR UPDATE to lock row against race conditions
   SELECT (total_quantity - sold_quantity) INTO v_available
   FROM public.ticket_types
   WHERE id = p_ticket_type_id
@@ -241,7 +287,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Check in a ticket securely with role and ownership verification
 CREATE OR REPLACE FUNCTION check_in_ticket(
   p_ticket_code TEXT,
   p_scanner_id UUID
@@ -252,7 +297,6 @@ DECLARE
   v_event RECORD;
   v_scanner RECORD;
 BEGIN
-  -- Verify ticket exists
   SELECT bt.*, b.event_id, b.user_id as attendee_id, tt.name as tier_name
   INTO v_ticket
   FROM public.booking_tickets bt
@@ -261,10 +305,9 @@ BEGIN
   WHERE bt.ticket_code = p_ticket_code;
 
   IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Invalid ticket code. Ticket not found.');
+    RETURN jsonb_build_object('success', false, 'message', 'Invalid ticket code. Not found in database.');
   END IF;
 
-  -- Verify scanner role and event ownership
   SELECT * INTO v_scanner FROM public.profiles WHERE id = p_scanner_id;
   SELECT * INTO v_event FROM public.events WHERE id = v_ticket.event_id;
 
@@ -272,7 +315,6 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'message', 'Unauthorized: You are not the organizer of this event.');
   END IF;
 
-  -- Check if already used
   IF v_ticket.status = 'used' THEN
     RETURN jsonb_build_object(
       'success', false,
@@ -286,7 +328,6 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'message', 'This ticket has been CANCELLED.');
   END IF;
 
-  -- Mark ticket as checked in
   UPDATE public.booking_tickets
   SET status = 'used', checked_in_at = NOW()
   WHERE ticket_code = p_ticket_code;
@@ -315,13 +356,16 @@ ALTER TABLE public.event_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.favorites ENABLE ROW LEVEL SECURITY;
 
 -- Profiles:
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profiles;
 CREATE POLICY "Public profiles are viewable by everyone"
   ON public.profiles FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile"
   ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
-CREATE POLICY "Users can update their own profile (cannot escalate role)"
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE USING (auth.uid() = id)
   WITH CHECK (
     auth.uid() = id AND 
@@ -330,6 +374,7 @@ CREATE POLICY "Users can update their own profile (cannot escalate role)"
   );
 
 -- Events:
+DROP POLICY IF EXISTS "Published events are viewable by everyone" ON public.events;
 CREATE POLICY "Published events are viewable by everyone"
   ON public.events FOR SELECT USING (
     status = 'published' OR 
@@ -337,18 +382,21 @@ CREATE POLICY "Published events are viewable by everyone"
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
+DROP POLICY IF EXISTS "Organizers and Admins can create events" ON public.events;
 CREATE POLICY "Organizers and Admins can create events"
   ON public.events FOR INSERT WITH CHECK (
     auth.uid() = organizer_id AND 
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('organizer', 'admin'))
   );
 
+DROP POLICY IF EXISTS "Organizers can update their own events" ON public.events;
 CREATE POLICY "Organizers can update their own events"
   ON public.events FOR UPDATE USING (
     organizer_id = auth.uid() OR 
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
+DROP POLICY IF EXISTS "Organizers can delete their own draft/pending events" ON public.events;
 CREATE POLICY "Organizers can delete their own draft/pending events"
   ON public.events FOR DELETE USING (
     organizer_id = auth.uid() OR 
@@ -356,9 +404,11 @@ CREATE POLICY "Organizers can delete their own draft/pending events"
   );
 
 -- Ticket Types:
+DROP POLICY IF EXISTS "Ticket types are viewable by everyone" ON public.ticket_types;
 CREATE POLICY "Ticket types are viewable by everyone"
   ON public.ticket_types FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Organizers can manage ticket types for their events" ON public.ticket_types;
 CREATE POLICY "Organizers can manage ticket types for their events"
   ON public.ticket_types FOR ALL USING (
     EXISTS (
@@ -368,6 +418,7 @@ CREATE POLICY "Organizers can manage ticket types for their events"
   );
 
 -- Bookings:
+DROP POLICY IF EXISTS "Users can view their own bookings" ON public.bookings;
 CREATE POLICY "Users can view their own bookings"
   ON public.bookings FOR SELECT USING (
     user_id = auth.uid() OR 
@@ -375,10 +426,12 @@ CREATE POLICY "Users can view their own bookings"
     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
   );
 
+DROP POLICY IF EXISTS "Authenticated users can create bookings" ON public.bookings;
 CREATE POLICY "Authenticated users can create bookings"
   ON public.bookings FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Booking Tickets:
+DROP POLICY IF EXISTS "Users can view their booking tickets" ON public.booking_tickets;
 CREATE POLICY "Users can view their booking tickets"
   ON public.booking_tickets FOR SELECT USING (
     EXISTS (
@@ -390,21 +443,38 @@ CREATE POLICY "Users can view their booking tickets"
   );
 
 -- Reviews:
+DROP POLICY IF EXISTS "Reviews are viewable by all" ON public.event_reviews;
 CREATE POLICY "Reviews are viewable by all"
   ON public.event_reviews FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Attendees can create reviews" ON public.event_reviews;
 CREATE POLICY "Attendees can create reviews"
   ON public.event_reviews FOR INSERT WITH CHECK (auth.uid() = user_id);
 
 -- Notifications:
+DROP POLICY IF EXISTS "Users can view and update their own notifications" ON public.notifications;
 CREATE POLICY "Users can view and update their own notifications"
   ON public.notifications FOR ALL USING (user_id = auth.uid());
 
 -- Favorites:
+DROP POLICY IF EXISTS "Users manage their favorites" ON public.favorites;
 CREATE POLICY "Users manage their favorites"
   ON public.favorites FOR ALL USING (user_id = auth.uid());
 
--- Storage Buckets Setup:
+-- Reports:
+DROP POLICY IF EXISTS "Users can report events" ON public.event_reports;
+CREATE POLICY "Users can report events"
+  ON public.event_reports FOR INSERT WITH CHECK (auth.uid() = reported_by);
+
+DROP POLICY IF EXISTS "Admins can view and manage event reports" ON public.event_reports;
+CREATE POLICY "Admins can view and manage event reports"
+  ON public.event_reports FOR ALL USING (
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  );
+
+-- ==============================================================================
+-- STORAGE BUCKETS & ACCESS POLICIES
+-- ==============================================================================
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('event-posters', 'event-posters', true)
 ON CONFLICT (id) DO NOTHING;
@@ -416,3 +486,31 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('event-assets', 'event-assets', true)
 ON CONFLICT (id) DO NOTHING;
+
+-- Storage Policies for event-posters
+DROP POLICY IF EXISTS "Public access to event posters" ON storage.objects;
+CREATE POLICY "Public access to event posters"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'event-posters');
+
+DROP POLICY IF EXISTS "Organizers can upload event posters" ON storage.objects;
+CREATE POLICY "Organizers can upload event posters"
+  ON storage.objects FOR INSERT
+  WITH CHECK (
+    bucket_id = 'event-posters' AND 
+    auth.role() = 'authenticated'
+  );
+
+-- Storage Policies for profile-avatars
+DROP POLICY IF EXISTS "Public access to profile avatars" ON storage.objects;
+CREATE POLICY "Public access to profile avatars"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'profile-avatars');
+
+DROP POLICY IF EXISTS "Users can upload their own avatar" ON storage.objects;
+CREATE POLICY "Users can upload their own avatar"
+  ON storage.objects FOR INSERT
+  WITH CHECK (
+    bucket_id = 'profile-avatars' AND 
+    auth.role() = 'authenticated'
+  );

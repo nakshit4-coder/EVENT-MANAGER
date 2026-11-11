@@ -19,6 +19,7 @@ import type { Event, Profile, EventReport } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { localStore } from '../lib/supabase';
+import { supabaseDataService } from '../services/supabaseService';
 
 interface AdminDashboardProps {
   onSelectEvent: (eventId: string) => void;
@@ -45,13 +46,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectEvent })
   const totalBookings = bookings.length;
   const totalRevenue = bookings.reduce((sum, b) => b.booking_status === 'confirmed' ? sum + b.total_amount : sum, 0);
 
-  const handleApproveEvent = (eventId: string) => {
-    localStore.updateEventStatus(eventId, 'published');
+  const handleApproveEvent = async (eventId: string) => {
+    await supabaseDataService.updateEventStatus(eventId, 'published');
     showToast('Event approved and published to the public directory.', 'success');
   };
 
-  const handleRejectEvent = (eventId: string) => {
-    localStore.updateEventStatus(eventId, 'rejected');
+  const handleRejectEvent = async (eventId: string) => {
+    await supabaseDataService.updateEventStatus(eventId, 'rejected');
     showToast('Event rejected.', 'info');
   };
 
